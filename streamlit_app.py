@@ -13,7 +13,7 @@ hf_token = st.secrets["HF_TOKEN"]
 
 # UPDATED: Configured to use Llama 3.1 8B Instruct
 client = InferenceClient(
-    model="meta-llama/Llama-3.1-8B-Instruct",
+    model="Qwen/Qwen3.8-2.4T-A95B",
     token=hf_token
 )
 
