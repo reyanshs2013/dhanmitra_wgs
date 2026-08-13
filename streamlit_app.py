@@ -12,7 +12,7 @@ hf_token = st.secrets["HF_TOKEN"]
 
 # FIXED: Replaced unsupported model with a reliable free model
 client = InferenceClient(
-    model="google/gemma-4-31B-it",
+    model="meta-llama/Llama-3.1-8B-Instruct",
     token=hf_token
 )
 
