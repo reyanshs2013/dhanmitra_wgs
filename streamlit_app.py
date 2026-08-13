@@ -1,7 +1,7 @@
 import streamlit as st
 from huggingface_hub import InferenceClient
 
-st.title("Dhanmitra App")
+st.title("My School Chatbot")
 
 # Safely fetch the token from Streamlit secrets
 if "HF_TOKEN" not in st.secrets:
@@ -10,7 +10,7 @@ if "HF_TOKEN" not in st.secrets:
 
 hf_token = st.secrets["HF_TOKEN"]
 
-# FIXED: Replaced unsupported model with a reliable free model
+# Reconfigured client with a stable public model
 client = InferenceClient(
     model="meta-llama/Llama-3.1-8B-Instruct",
     token=hf_token
@@ -35,14 +35,16 @@ if prompt := st.chat_input("Type your message here..."):
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                response = client.chat_completion(
+                response = client.chat.completions.create(
                     messages=[
                         {"role": m["role"], "content": m["content"]}
                         for m in st.session_state.messages
                     ],
                     max_tokens=500,
                 )
-                answer = response.choices.message.content
+                # FIXED: Added [0] to extract the first choice from the list
+                answer = response.choices[0].message.content
+                
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
             except Exception as e:
