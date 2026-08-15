@@ -8,7 +8,7 @@ and powered by an open Hugging Face model (Qwen 2.5 by default).
 
 | File | Purpose |
 |---|---|
-| `app.py` | The Streamlit UI — profile-builder sliders + Station 5 chat |
+| `streamlit_app.py` | The Streamlit UI — profile-builder sliders + Station 5 chat |
 | `config.py` | All copy, categories, quick prompts, guardrail keywords, model list |
 | `utils.py` | The maths: Wellness Score, goal timeline, SIP compounding, risk profile |
 | `llm.py` | Hugging Face `InferenceClient` wrapper, personalised system-prompt builder, finance-only guardrail |
