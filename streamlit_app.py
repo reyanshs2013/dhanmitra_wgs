@@ -1,20 +1,71 @@
-import os
-import math
-import random
-import streamlit as st
+"""
+Dhan Mitra — Station 5: AI Financial Coach
+--------------------------------------------
+This is the Station 5 deliverable: an AI financial coach chat, personalised
+with data "gathered" from Stations 1-4. Since only Station 5 is being built
+here, the sliders below act as a lightweight, self-contained simulator for
+Stations 1-4 — a visitor drags a few sliders in each tab, and those numbers
+flow straight into the AI coach's system prompt.
+
+Run with:  streamlit run app.py
+"""
 import pandas as pd
-import plotly.express as px
-from huggingface_hub import InferenceClient
+import streamlit as st
 
-# ============================================================
-# DHAN MITRA
-# Complete Streamlit financial-literacy application
-# ============================================================
+from config import (
+    APP_TITLE, APP_TAGLINE, SPEND_CATEGORIES, GOAL_OPTIONS, RISK_QUESTIONS,
+    RISK_TO_SUGGESTED_MIX, DEFAULT_RETURN_RATE, QUICK_PROMPTS,
+    VAGUE_DEMO_PROMPT, DECLINE_MESSAGE, HF_MODEL_OPTIONS,
+)
+from utils import (
+    compute_wellness_score, compute_goal_plan, compute_risk_score,
+    compute_risk_profile, investment_comparison, compound_growth_series,
+    future_value_sip,
+)
+from llm import build_system_prompt, get_client, ask_coach, looks_off_topic
 
-st.set_page_config(
-    page_title="Dhan Mitra",
-    page_icon="💚",
-    layout="wide"
+# ---------------------------------------------------------------------------
+# Page setup
+# ---------------------------------------------------------------------------
+st.set_page_config(page_title=APP_TITLE, page_icon="💰", layout="wide")
+
+st.markdown(
+    """
+    <style>
+    .stApp { background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%); }
+    .dm-hero {
+        background: linear-gradient(120deg, #0f2557 0%, #14532d 50%, #0f766e 100%);
+        padding: 2rem 2.2rem; border-radius: 18px; color: white; margin-bottom: 1.3rem;
+        box-shadow: 0 10px 30px rgba(15, 37, 87, 0.25);
+    }
+    .dm-hero h1 { margin: 0; font-size: 2.05rem; }
+    .dm-hero p { margin: 0.35rem 0 0 0; opacity: 0.92; font-size: 1.05rem; }
+    .dm-badge {
+        display: inline-block; background: rgba(255,255,255,0.16);
+        padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.8rem; margin-top: 0.7rem;
+    }
+    div.stButton > button {
+        border-radius: 999px; border: 1px solid #0f766e; font-weight: 500;
+    }
+    div.stButton > button:hover { background-color: #0f766e; color: white; border-color: #0f766e; }
+    .dm-callout {
+        background: #ecfdf5; border: 1px solid #6ee7b7; border-radius: 12px;
+        padding: 0.9rem 1.1rem; font-size: 0.95rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    f"""
+    <div class="dm-hero">
+      <h1>💰 {APP_TITLE}</h1>
+      <p>{APP_TAGLINE} — Station 5: Heart of Project</p>
+      <span class="dm-badge">🤖 Powered by an open Hugging Face model</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 # ---------------- CONFIG ----------------
@@ -28,911 +79,290 @@ def get_secret(name, default=""):
         pass
     return os.getenv(name, default)
 
-HF_TOKEN = get_secret("HF_TOKEN")
-HF_MODEL = get_secret(
-    "HF_MODEL",
-    "Qwen/Qwen3.8-2.4T-A95B"
-)
 
-# ---------------- FINANCE-ONLY AI ----------------
+# ---------------------------------------------------------------------------
+# Session state
+# ---------------------------------------------------------------------------
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-SYSTEM_PROMPT = """
-You are Dhan Mitra, an AI financial-literacy coach.
+# ---------------------------------------------------------------------------
+# Sidebar — AI setup
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("### 🔑 AI Setup")
+    hf_token = get_secret("HF_TOKEN")
 
-You ONLY answer finance and financial-literacy questions.
+    model_label = st.selectbox("Choose a model", list(HF_MODEL_OPTIONS.keys()))
+    model_id = HF_MODEL_OPTIONS[model_label]
 
-Allowed topics:
-budgeting, saving, spending, income, expenses, financial goals,
-emergency funds, debt, EMI, compound interest, SIP, mutual funds,
-fixed deposits, stocks, bonds, gold, inflation, risk, diversification,
-retirement, pension, insurance, taxes at a general educational level,
-wealth building, portfolio concepts, assets, liabilities and net worth.
+    with st.expander("Advanced settings"):
+        custom_model = st.text_input("Custom model ID (optional)", value="")
+        provider = st.text_input("Inference provider override (optional)", value="")
+    if custom_model.strip():
+        model_id = custom_model.strip()
 
-If the user asks a non-finance question, respond exactly:
-"Sorry, I am Dhan Mitra. I can answer only finance and
-financial-literacy questions."
+    st.caption("🔗 Get a free token at huggingface.co/settings/tokens")
+    st.divider()
+    st.markdown("#### About")
+    st.caption(APP_TAGLINE)
+    st.caption("This build covers Station 5 only. Stations 1-4 below are a "
+               "quick simulator so Station 5 has real numbers to personalise around.")
 
-Rules:
-- Never guarantee investment returns.
-- Do not claim to be a SEBI-registered adviser.
-- Do not give personalized buy/sell instructions for individual securities.
-- Explain concepts in simple language.
-- Clearly label projections as illustrations.
-- Explain that SIP is a method and a Mutual Fund is a product.
-- If a question is outside finance, do not answer it even if it is harmless.
-"""
+    if st.session_state.chat_history:
+        if st.button("🗑️ Clear chat", use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
 
-FINANCE_TERMS = {
-    "finance", "financial", "money", "budget", "budgeting", "saving",
-    "savings", "save", "spending", "expense", "expenses", "income",
-    "invest", "investment", "investing", "investor", "stock", "stocks",
-    "share", "shares", "mutual fund", "mutual funds", "sip",
-    "systematic investment", "fixed deposit", "fd", "gold", "bond",
-    "bonds", "loan", "loans", "debt", "emi", "interest", "compound",
-    "compounding", "inflation", "tax", "taxes", "wealth", "portfolio",
-    "risk", "diversification", "return", "returns", "goal", "goals",
-    "emergency fund", "retirement", "pension", "nps", "insurance",
-    "net worth", "cash flow", "asset", "assets", "liability",
-    "liabilities", "sip vs mutual fund", "asset allocation"
-}
+# ---------------------------------------------------------------------------
+# Visitor profile builder — Stations 1-4 recap
+# ---------------------------------------------------------------------------
+st.markdown("## 🧩 Build Your Visitor Profile")
+st.caption("Quick sliders standing in for Stations 1-4 — drag them, then chat with Station 5 below.")
 
-def is_finance_question(question):
-    q = question.lower().strip()
-    return any(term in q for term in FINANCE_TERMS)
+tab1, tab2, tab3, tab4 = st.tabs([
+    "1️⃣ Smart Wallet", "2️⃣ Goal+ Planner", "3️⃣ Invest Smart", "4️⃣ Wealth Lab",
+])
 
-def ask_huggingface(messages):
-    if not HF_TOKEN:
-        return (
-            "⚠️ Hugging Face is not connected. Add HF_TOKEN to "
-            "Streamlit Secrets to activate the AI coach."
-        )
+# ---- Station 1: Smart Wallet ----------------------------------------------
+with tab1:
+    st.markdown("**Do you know where your money goes?**")
+    income = st.slider("Monthly Income (₹)", min_value=5000, max_value=200000,
+                        value=30000, step=1000, key="income")
 
-    try:
-        client = InferenceClient(
-            api_key=HF_TOKEN,
-            provider="auto"
-        )
-
-        result = client.chat.completions.create(
-            model=HF_MODEL,
-            messages=messages,
-            max_tokens=700,
-            temperature=0.25
-        )
-
-        return result.choices[0].message.content
-
-    except Exception as error:
-        return f"⚠️ Hugging Face connection error: {error}"
-
-# ---------------- CALCULATIONS ----------------
-
-def calculate_wellness(income, spending, savings, existing_savings, emi):
-    if income <= 0:
-        return 0
-
-    savings_rate = savings / income
-    expense_ratio = spending / income
-    debt_ratio = emi / income
-
-    savings_points = min(30, savings_rate / 0.20 * 30)
-
-    if expense_ratio <= .50:
-        expense_points = 25
-    elif expense_ratio <= .60:
-        expense_points = 22
-    elif expense_ratio <= .70:
-        expense_points = 18
-    elif expense_ratio <= .80:
-        expense_points = 13
-    elif expense_ratio <= .90:
-        expense_points = 8
-    else:
-        expense_points = 3
-
-    if debt_ratio == 0:
-        debt_points = 25
-    elif debt_ratio <= .10:
-        debt_points = 22
-    elif debt_ratio <= .20:
-        debt_points = 17
-    elif debt_ratio <= .30:
-        debt_points = 10
-    else:
-        debt_points = 5
-
-    buffer = existing_savings / income
-
-    if buffer >= 6:
-        readiness_points = 20
-    elif buffer >= 3:
-        readiness_points = 15
-    elif buffer >= 1:
-        readiness_points = 10
-    else:
-        readiness_points = 5
-
-    return max(
-        0,
-        min(
-            100,
-            round(
-                savings_points +
-                expense_points +
-                debt_points +
-                readiness_points
-            )
-        )
-    )
-
-def compound_value(monthly, years, annual_rate):
-    r = annual_rate / 12
-    n = years * 12
-
-    if r == 0:
-        return monthly * n
-
-    return monthly * (((1 + r) ** n - 1) / r) * (1 + r)
-
-# ---------------- SESSION ----------------
-
-if "chat" not in st.session_state:
-    st.session_state.chat = []
-
-if "context" not in st.session_state:
-    st.session_state.context = {
-        "income": 50000,
-        "existing_savings": 50000,
-        "housing": 10000,
-        "food": 6000,
-        "transport": 4000,
-        "shopping": 5000,
-        "emi": 5000,
-        "savings": 5000,
-        "goal": "Emergency Fund",
-        "target": 100000,
-        "goal_saved": 20000,
-        "risk": "Not assessed"
-    }
-
-ctx = st.session_state.context
-
-# ---------------- STYLE ----------------
-
-st.markdown("""
-<style>
-.stApp {
-    background: #f3f8f5;
-}
-.hero {
-    background: linear-gradient(135deg,#063b2b,#087f5b,#19a974);
-    color: white;
-    padding: 35px;
-    border-radius: 28px;
-    margin-bottom: 24px;
-    box-shadow: 0 12px 32px rgba(0,0,0,.15);
-}
-.hero h1 {
-    font-size: 50px;
-    margin: 0;
-}
-.hero p {
-    font-size: 18px;
-}
-.card {
-    background: white;
-    border: 1px solid #d8e8df;
-    border-radius: 20px;
-    padding: 22px;
-    box-shadow: 0 6px 18px rgba(0,0,0,.06);
-    min-height: 160px;
-}
-.ai {
-    background: linear-gradient(135deg,#052f24,#087f5b);
-    color: white;
-    border-radius: 24px;
-    padding: 28px;
-}
-.tip {
-    background: #e7f7ee;
-    border-left: 6px solid #0a8c63;
-    padding: 18px;
-    border-radius: 10px;
-}
-.reject {
-    background: #fff0f0;
-    border-left: 6px solid #d33d3d;
-    padding: 16px;
-    border-radius: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ---------------- HEADER ----------------
-
-st.markdown("""
-<div class="hero">
-    <h1>💚 DHAN MITRA</h1>
-    <h2>AI FINANCIAL COACH</h2>
-    <p>
-    <b>Your financial-literacy companion</b><br>
-    Understand → Budget → Save → Set Goals → Learn Risk →
-    See Compound Growth → Ask the AI
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-# ---------------- NAVIGATION ----------------
-
-st.sidebar.title("💚 Dhan Mitra")
-page = st.sidebar.radio(
-    "Choose a section",
-    [
-        "🏠 Home",
-        "💰 Station 1 — Smart Wallet",
-        "🎯 Station 2 — Goal+",
-        "📊 Station 3 — Invest Smart",
-        "📈 Station 4 — Wealth Lab",
-        "🤖 Station 5 — AI Financial Coach",
-        "🔄 Flowchart"
-    ]
-)
-
-st.sidebar.info(
-    "🔒 The AI accepts finance and financial-literacy questions only."
-)
-
-# ============================================================
-# HOME
-# ============================================================
-
-if page == "🏠 Home":
-
-    st.markdown("## 💚 The Heart of Dhan Mitra")
-
-    spending = (
-        ctx["housing"] +
-        ctx["food"] +
-        ctx["transport"] +
-        ctx["shopping"] +
-        ctx["emi"]
-    )
-
-    score = calculate_wellness(
-        ctx["income"],
-        spending,
-        ctx["savings"],
-        ctx["existing_savings"],
-        ctx["emi"]
-    )
-
-    a, b, c, d = st.columns(4)
-    a.metric("💚 Wellness Score", f"{score}/100")
-    b.metric("💰 Income", f"₹{ctx['income']:,.0f}")
-    c.metric("📉 Spending", f"₹{spending:,.0f}")
-    d.metric("🎯 Goal", ctx["goal"])
-
-    st.markdown("## 🧭 Five-Part Journey")
-
-    stations = [
-        ("💰", "Station 1", "Smart Wallet",
-         "Understand where your money goes."),
-        ("🎯", "Station 2", "Goal+",
-         "Save with a purpose."),
-        ("📊", "Station 3", "Invest Smart",
-         "Understand risk and investment concepts."),
-        ("📈", "Station 4", "Wealth Lab",
-         "Make compound growth visible."),
-        ("🤖", "Station 5", "AI Financial Coach",
-         "Ask finance questions and receive financial-literacy answers.")
-    ]
-
-    cols = st.columns(5)
-
-    for col, (icon, station, title, description) in zip(cols, stations):
-        with col:
-            st.markdown(
-                f"""
-                <div class="card">
-                    <div style="font-size:42px">{icon}</div>
-                    <small>{station}</small>
-                    <h3>{title}</h3>
-                    <p>{description}</p>
-                </div>
-                """,
-                unsafe_allow_html=True
+    spends = {}
+    cols = st.columns(3)
+    for i, (cat, emoji, frac) in enumerate(SPEND_CATEGORIES):
+        with cols[i % 3]:
+            spends[cat] = st.slider(
+                f"{emoji} {cat} (₹)", min_value=0, max_value=200000,
+                value=int(income * frac), step=500, key=f"spend_{cat}",
             )
 
-    tips = [
-        "Track your spending before deciding how much you can invest.",
-        "Give every savings target a clear purpose and deadline.",
-        "An emergency fund can help protect your financial plan from surprises.",
-        "SIP is a method; a Mutual Fund is a product.",
-        "Compound growth becomes more powerful as time increases."
-    ]
+    wellness = compute_wellness_score(income, spends)
 
-    st.markdown("## 💡 Dhan Mitra Tip")
+    if wellness["total_spend"] > income:
+        st.warning("⚠️ You're spending more than you earn this month!")
 
-    if "tip" not in st.session_state:
-        st.session_state.tip = random.choice(tips)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Financial Wellness Score", f"{wellness['score']}/100", wellness["band"])
+    m2.metric("Monthly Savings", f"₹{wellness['savings']:,.0f}", f"{wellness['savings_rate']}% of income")
+    m3.metric("Total Monthly Spend", f"₹{wellness['total_spend']:,.0f}")
+    st.progress(wellness["score"] / 100)
 
-    st.markdown(
-        f'<div class="tip"><b>💡 Tip:</b> {st.session_state.tip}</div>',
-        unsafe_allow_html=True
-    )
+# ---- Station 2: Goal+ Planner ---------------------------------------------
+with tab2:
+    st.markdown("**Don't just save. Save with a purpose.**")
+    goal_name = st.selectbox("Choose your goal", GOAL_OPTIONS, key="goal_name")
+    target = st.slider("Target Amount (₹)", min_value=1000, max_value=1000000,
+                        value=20000, step=500, key="goal_target")
+    saved = st.slider("Already Saved So Far (₹)", min_value=0, max_value=500000,
+                       value=2000, step=500, key="goal_saved")
+    monthly_save = st.slider("You Can Save Monthly (₹)", min_value=100, max_value=20000,
+                              value=2000, step=100, key="goal_monthly")
 
-    if st.button("🔄 New Finance Tip"):
-        st.session_state.tip = random.choice(tips)
-        st.rerun()
+    goal_plan = compute_goal_plan(target, saved, monthly_save)
+    progress = min(saved / target, 1.0) if target > 0 else 0
 
-# ============================================================
-# STATION 1
-# ============================================================
+    st.progress(progress, text=f"₹{saved:,.0f} / ₹{target:,.0f} saved")
+    g1, g2 = st.columns(2)
+    g1.metric("Months to Reach Goal", f"{goal_plan['months']:.1f} mo")
+    g2.metric(f"Save ₹{goal_plan['boost']:.0f} more/month →", f"{goal_plan['faster_months']:.1f} mo",
+               f"{goal_plan['months_saved']:.1f} months faster")
 
-elif page == "💰 Station 1 — Smart Wallet":
+# ---- Station 3: Invest Smart -----------------------------------------------
+with tab3:
+    st.markdown("**\"Which option suits YOU?\"** — answer honestly:")
+    answers = []
+    for i, q in enumerate(RISK_QUESTIONS):
+        choice = st.radio(q["question"], list(q["options"].keys()), key=f"risk_{i}")
+        answers.append(q["options"][choice])
 
-    st.markdown("## 💰 Station 1 — Smart Wallet")
-    st.subheader("Do you know where your money goes?")
-    st.write(
-        "This is the diagnostic stage. Understand cash flow, spending "
-        "and savings capacity before making investment decisions."
-    )
+    risk_score = compute_risk_score(answers)
+    risk_profile = compute_risk_profile(risk_score)
+    mix = RISK_TO_SUGGESTED_MIX[risk_profile]
+    comparison = investment_comparison(monthly_save, 10)
 
-    income = st.number_input(
-        "Monthly income (₹)",
-        0, 10000000, ctx["income"], 1000
-    )
+    st.success(f"🧭 Your Risk Profile: **{risk_profile}**")
 
-    existing = st.number_input(
-        "Existing savings (₹)",
-        0, 100000000, ctx["existing_savings"], 5000
-    )
-
-    st.markdown("### Six categories")
-
-    left, right = st.columns(2)
-
-    with left:
-        housing = st.number_input(
-            "🏠 Housing & Utilities (₹)",
-            0, 10000000, ctx["housing"], 500
-        )
-        food = st.number_input(
-            "🍎 Food (₹)",
-            0, 10000000, ctx["food"], 500
-        )
-        transport = st.number_input(
-            "🚗 Transport (₹)",
-            0, 10000000, ctx["transport"], 500
-        )
-
-    with right:
-        shopping = st.number_input(
-            "🛍️ Shopping & Entertainment (₹)",
-            0, 10000000, ctx["shopping"], 500
-        )
-        emi = st.number_input(
-            "💳 Debt / EMIs (₹)",
-            0, 10000000, ctx["emi"], 500
-        )
-        savings = st.number_input(
-            "📈 Savings & Investments (₹)",
-            0, 10000000, ctx["savings"], 500
-        )
-
-    if st.button("🧮 Calculate Wellness Score", type="primary"):
-
-        spending = housing + food + transport + shopping + emi
-        surplus = income - spending - savings
-
-        score = calculate_wellness(
-            income, spending, savings, existing, emi
-        )
-
-        ctx.update({
-            "income": income,
-            "existing_savings": existing,
-            "housing": housing,
-            "food": food,
-            "transport": transport,
-            "shopping": shopping,
-            "emi": emi,
-            "savings": savings
-        })
-
-        x, y, z = st.columns(3)
-        x.metric("💚 Financial Wellness", f"{score}/100")
-        y.metric("📉 Monthly Spending", f"₹{spending:,.0f}")
-        z.metric("💵 Monthly Surplus", f"₹{surplus:,.0f}")
-
-        chart = pd.DataFrame({
-            "Category": [
-                "Housing", "Food", "Transport",
-                "Shopping", "Debt / EMI", "Savings"
-            ],
-            "Amount": [
-                housing, food, transport,
-                shopping, emi, savings
-            ]
-        })
-
-        fig = px.bar(
-            chart,
-            x="Category",
-            y="Amount",
-            text="Amount",
-            title="Where Your Money Goes"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-# ============================================================
-# STATION 2
-# ============================================================
-
-elif page == "🎯 Station 2 — Goal+":
-
-    st.markdown("## 🎯 Station 2 — Goal+ Planner")
-    st.subheader("Don't just save. Save with a purpose.")
-
-    goal = st.text_input("Your financial goal", ctx["goal"])
-
-    target = st.number_input(
-        "Target amount (₹)",
-        0, 100000000, ctx["target"], 5000
-    )
-
-    saved = st.number_input(
-        "Already saved (₹)",
-        0, 100000000, ctx["goal_saved"], 1000
-    )
-
-    monthly = st.number_input(
-        "Monthly saving capacity (₹)",
-        0, 10000000, 10000, 500
-    )
-
-    remaining = max(target - saved, 0)
-
-    months = math.ceil(remaining / monthly) if monthly else None
-
-    progress = min(saved / target, 1) if target else 0
-
-    st.progress(progress)
-
-    st.metric(
-        "Estimated time to goal",
-        f"{months} months" if months else "Enter a monthly saving amount"
-    )
-
-    faster = monthly * 1.15
-
-    if faster > 0:
-        faster_months = math.ceil(remaining / faster)
-
-        st.info(
-            f"💡 Saving 15% more each month (₹{faster:,.0f}) "
-            f"could reduce the simple saving period to about "
-            f"**{faster_months} months**."
-        )
-
-    ctx.update({
-        "goal": goal,
-        "target": target,
-        "goal_saved": saved
-    })
-
-# ============================================================
-# STATION 3
-# ============================================================
-
-elif page == "📊 Station 3 — Invest Smart":
-
-    st.markdown("## 📊 Station 3 — Invest Smart")
-    st.subheader("Which option suits YOU?")
-
-    q1 = st.radio(
-        "If your investment temporarily fell 20%, what would you do?",
-        [
-            "I would be very uncomfortable.",
-            "I could tolerate it.",
-            "I could accept it for long-term growth."
-        ]
-    )
-
-    q2 = st.radio(
-        "When might you need the money?",
-        [
-            "1–3 years",
-            "3–7 years",
-            "More than 7 years"
-        ]
-    )
-
-    q3 = st.radio(
-        "What matters most?",
-        [
-            "Protecting money",
-            "Balance",
-            "Long-term growth"
-        ]
-    )
-
-    risk_points = (
-        1 if "very uncomfortable" in q1 else
-        2 if "tolerate" in q1 else 3
-    )
-
-    risk_points += (
-        1 if "1–3" in q2 else
-        2 if "3–7" in q2 else 3
-    )
-
-    risk_points += (
-        1 if "Protecting" in q3 else
-        2 if "Balance" in q3 else 3
-    )
-
-    profile = (
-        "Conservative" if risk_points <= 4 else
-        "Moderate" if risk_points <= 7 else
-        "Aggressive"
-    )
-
-    ctx["risk"] = profile
-
-    st.success(
-        f"Educational risk profile: **{profile}**"
-    )
+    c1, c2 = st.columns([1, 1.3])
+    with c1:
+        st.markdown("**Illustrative suggested mix**")
+        mix_df = pd.DataFrame(list(mix.items()), columns=["Product", "Suggested %"]).set_index("Product")
+        st.bar_chart(mix_df)
+    with c2:
+        st.markdown(f"**If you invested ₹{monthly_save:,.0f}/month for 10 years:**")
+        cmp_df = pd.DataFrame(list(comparison.items()), columns=["Product", "Projected Value (₹)"]).set_index("Product")
+        st.bar_chart(cmp_df)
 
     st.info(
-        "📚 Financial-literacy distinction: "
-        "**SIP is a method of investing. Mutual Fund is a product.** "
-        "A person can invest in a Mutual Fund via SIP."
+        "💡 **SIP vs Mutual Fund isn't a real comparison.** A SIP is a *method* — "
+        "investing a fixed amount every month. A Mutual Fund is a *product* — a "
+        "pool of stocks/bonds managed by experts. You invest **in** a Mutual Fund "
+        "**via** a SIP."
     )
 
-    comparison = pd.DataFrame({
-        "Option": [
-            "Fixed Deposit", "Gold", "Mutual Funds", "Stocks"
-        ],
-        "Illustrative Relative Risk": [1, 3, 3, 5]
-    })
+# ---- Station 4: Wealth Lab --------------------------------------------------
+with tab4:
+    st.markdown("**\"Show me the numbers!\"** — the compound growth calculator.")
+    w_monthly = st.slider("Monthly Investment (₹)", min_value=100, max_value=50000,
+                           value=2000, step=100, key="wealth_monthly")
+    w_years = st.slider("Number of Years", min_value=1, max_value=40, value=10, key="wealth_years")
+    w_rate = st.slider("Assumed Annual Return (%)", min_value=1.0, max_value=20.0,
+                        value=DEFAULT_RETURN_RATE, step=0.5, key="wealth_rate")
 
-    fig = px.bar(
-        comparison,
-        x="Option",
-        y="Illustrative Relative Risk",
-        text="Illustrative Relative Risk",
-        title="Educational Relative Risk Scale"
+    fv = future_value_sip(w_monthly, w_years, w_rate / 100)
+    fv_half = future_value_sip(w_monthly, w_years / 2, w_rate / 100)
+    series = compound_growth_series(w_monthly, w_years, w_rate)
+
+    st.caption("Example from Dhan Mitra's own story: ₹500/month at 12% ≈ ₹1,15,019 in 10 years, "
+               "but ≈ ₹4,94,969 in 20 years — twice the time, ~4× the money.")
+
+    v1, v2 = st.columns(2)
+    v1.metric(f"Projected Value in {w_years} years", f"₹{fv:,.0f}")
+    if fv_half > 0:
+        v2.metric(f"...vs. just {w_years/2:.0f} years", f"₹{fv_half:,.0f}", f"{fv/fv_half:.1f}× less")
+
+    chart_df = pd.DataFrame(series).set_index("year") if series else pd.DataFrame()
+    if not chart_df.empty:
+        st.line_chart(chart_df)
+
+    st.markdown(
+        f'<div class="dm-callout">📈 Twice the time isn\'t twice the money — it\'s roughly '
+        f'<b>{(fv/fv_half if fv_half > 0 else 0):.1f}×</b> more, thanks to compounding. '
+        f'Starting early is the single biggest lever you control.</div>',
+        unsafe_allow_html=True,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
-
-# ============================================================
-# STATION 4
-# ============================================================
-
-elif page == "📈 Station 4 — Wealth Lab":
-
-    st.markdown("## 📈 Station 4 — Wealth Lab")
-    st.subheader("Show me the numbers!")
-
-    monthly = st.number_input(
-        "Monthly investment (₹)",
-        100, 1000000, 500, 100
-    )
-
-    years = st.slider(
-        "Number of years",
-        1, 40, 20
-    )
-
-    rate = st.slider(
-        "Assumed annual return (%)",
-        0.0, 20.0, 12.0, 0.5
-    )
-
-    data = []
-
-    for year in range(1, years + 1):
-
-        invested = monthly * year * 12
-
-        projected = compound_value(
-            monthly,
-            year,
-            rate / 100
-        )
-
-        data.append({
-            "Year": year,
-            "Invested": invested,
-            "Illustrative Value": projected
-        })
-
-    df = pd.DataFrame(data)
-
-    fig = px.bar(
-        df,
-        x="Year",
-        y=["Invested", "Illustrative Value"],
-        barmode="group",
-        title="Compound Growth Illustration"
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    final_value = compound_value(
-        monthly, years, rate / 100
-    )
-
-    st.success(
-        f"Illustrative value after {years} years: "
-        f"**₹{final_value:,.0f}**"
-    )
-
-    st.warning(
-        "This is a mathematical illustration based on an assumed rate. "
-        "Actual investment returns can vary."
-    )
-
-# ============================================================
-# STATION 5
-# ============================================================
-
-elif page == "🤖 Station 5 — AI Financial Coach":
-
-    st.markdown("## 🤖 Station 5 — Dhan Mitra AI")
-
-    st.markdown("""
-    <div class="ai">
-        <h2>💚 Your Finance-Only AI Coach</h2>
-        <p>
-        Ask me about budgeting, saving, goals, compound interest,
-        SIPs, mutual funds, risk, debt, inflation, retirement,
-        investing concepts and other finance topics.
-        </p>
-        <p><b>🚫 Non-finance questions are automatically rejected.</b></p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.write("")
-
-    # Financial context supplied to the model.
-    spending = (
-        ctx["housing"] +
-        ctx["food"] +
-        ctx["transport"] +
-        ctx["shopping"] +
-        ctx["emi"]
-    )
-
-    score = calculate_wellness(
-        ctx["income"],
-        spending,
-        ctx["savings"],
-        ctx["existing_savings"],
-        ctx["emi"]
-    )
-
-    with st.expander("🧠 View information available to the AI"):
-
-        st.json({
-            "monthly_income": ctx["income"],
-            "monthly_spending": spending,
-            "monthly_savings": ctx["savings"],
-            "existing_savings": ctx["existing_savings"],
-            "financial_wellness_score": score,
-            "goal": ctx["goal"],
-            "goal_target": ctx["target"],
-            "risk_profile": ctx["risk"]
-        })
-
-    for message in st.session_state.chat:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    question = st.chat_input(
-        "Ask Dhan Mitra a finance question..."
-    )
-
-    if question:
-
-        st.session_state.chat.append({
-            "role": "user",
-            "content": question
-        })
-
-        with st.chat_message("user"):
-            st.markdown(question)
-
-        # HARD FINANCE GATE
-        if not is_finance_question(question):
-
-            answer = (
-                "Sorry, I am Dhan Mitra. "
-                "I can answer only finance and financial-literacy questions."
-            )
-
-            with st.chat_message("assistant"):
-                st.markdown(
-                    f'<div class="reject">🚫 {answer}</div>',
-                    unsafe_allow_html=True
-                )
-
-        else:
-
-            context_message = f"""
-Visitor financial context:
-Monthly income: ₹{ctx["income"]:,.0f}
-Monthly spending: ₹{spending:,.0f}
-Monthly savings/investments: ₹{ctx["savings"]:,.0f}
-Existing savings: ₹{ctx["existing_savings"]:,.0f}
-Financial Wellness Score: {score}/100
-Goal: {ctx["goal"]}
-Goal target: ₹{ctx["target"]:,.0f}
-Educational risk profile: {ctx["risk"]}
-
-Use this context only when useful. Explain that the Wellness
-Score is a project metric, not an official financial standard.
-"""
-
-            messages = [
-                {
-                    "role": "system",
-                    "content": SYSTEM_PROMPT
-                },
-                {
-                    "role": "system",
-                    "content": context_message
-                }
-            ]
-
-            messages.extend(
-                st.session_state.chat[-8:]
-            )
-
-            with st.chat_message("assistant"):
-
-                with st.spinner("💚 Dhan Mitra is thinking..."):
-                    answer = ask_huggingface(messages)
-
-                st.markdown(answer)
-
-        st.session_state.chat.append({
-            "role": "assistant",
-            "content": answer
-        })
-
-# ============================================================
-# FLOWCHART
-# ============================================================
-
-elif page == "🔄 Flowchart":
-
-    st.markdown("## 🔄 Dhan Mitra Flowchart")
-
-    st.markdown("""
-```text
-                         ┌─────────────────┐
-                         │   👤 USER       │
-                         └────────┬────────┘
-                                  │
-                                  ▼
-                     ┌────────────────────────┐
-                     │   💚 DHAN MITRA  │
-                     └───────────┬────────────┘
-                                 │
-          ┌──────────────────────┼──────────────────────┐
-          │                      │                      │
-          ▼                      ▼                      ▼
- ┌────────────────┐     ┌────────────────┐     ┌────────────────┐
- │ 💰 STATION 1   │     │ 🎯 STATION 2   │     │ 📊 STATION 3   │
- │ SMART WALLET   │────▶│ GOAL+ PLANNER  │────▶│ INVEST SMART   │
- │                │     │                │     │                │
- │ Income         │     │ Goal           │     │ Risk Questions │
- │ 6 Categories   │     │ Target         │     │ Risk Profile   │
- │ Savings        │     │ Timeline       │     │ SIP vs MF      │
- │ Wellness Score │     └───────┬────────┘     └───────┬────────┘
- └───────┬────────┘             │                      │
-         │                      └──────────┬───────────┘
-         │                                 │
-         └────────────────┬────────────────┘
-                          ▼
-                 ┌────────────────┐
-                 │ 📈 STATION 4   │
-                 │ WEALTH LAB     │
-                 │                │
-                 │ Monthly Amount │
-                 │ Years          │
-                 │ Return Assump. │
-                 │ Compound Growth│
-                 └───────┬────────┘
-                         │
-                         ▼
-                ┌──────────────────┐
-                │ 🧠 USER CONTEXT  │
-                │                  │
-                │ Budget           │
-                │ Wellness Score   │
-                │ Goal             │
-                │ Risk Profile     │
-                │ Growth Math      │
-                └────────┬─────────┘
-                         │
-                         ▼
-                ┌──────────────────┐
-                │ 🤖 STATION 5     │
-                │ AI FINANCIAL     │
-                │ COACH            │
-                └────────┬─────────┘
-                         │
-                         ▼
-                 ┌────────────────┐
-                 │ FINANCE TOPIC? │
-                 └───────┬────────┘
-                    YES / \ NO
-                       /   \
-                      ▼     ▼
-          ┌────────────────┐ ┌─────────────────────┐
-          │ Hugging Face   │ │ 🚫 REJECT QUESTION  │
-          │ AI MODEL       │ │                     │
-          └───────┬────────┘ │ "Sorry, I am Dhan  │
-                  │          │ Mitra Heart. I can  │
-                  ▼          │ answer only finance│
-          ┌────────────────┐ │ questions."        │
-          │ 💚 FINANCE     │ └─────────────────────┘
-          │ ANSWER         │
-          └────────────────┘
-```
-""")
-
-    st.markdown("### 🏗️ Technical Architecture")
-
-    st.code("""
-USER
-  |
-  v
-STREAMLIT UI
-  |
-  +---- Station 1: Smart Wallet
-  |          |
-  |          +---- Wellness Score
-  |
-  +---- Station 2: Goal+
-  |          |
-  |          +---- Goal Timeline
-  |
-  +---- Station 3: Invest Smart
-  |          |
-  |          +---- Risk Profile
-  |
-  +---- Station 4: Wealth Lab
-  |          |
-  |          +---- Compound Growth
-  |
-  +---- Financial Context
-             |
-             v
-       Finance Question Gate
-          /           \
-        YES            NO
-         |              |
-         v              v
-  Dhan Mitra Prompt   Reject
-         |
-         v
-  Hugging Face
-  InferenceClient
-         |
-         v
-  Finance-only answer
-""", language="text")
-
-# ---------------- FOOTER ----------------
+# ---------------------------------------------------------------------------
+# Assemble the visitor profile for the AI
+# ---------------------------------------------------------------------------
+profile = {
+    "station1": {
+        "income": income,
+        "total_spend": wellness["total_spend"],
+        "savings_rate": wellness["savings_rate"],
+        "score": wellness["score"],
+        "band": wellness["band"],
+    },
+    "station2": {
+        "goal_name": goal_name,
+        "target": target,
+        "saved": saved,
+        "monthly": monthly_save,
+        "months": goal_plan["months"],
+        "faster_months": goal_plan["faster_months"],
+        "boost": goal_plan["boost"],
+    },
+    "station3": {
+        "risk_profile": risk_profile,
+        "mix": mix,
+        "comparison": comparison,
+    },
+    "station4": {
+        "monthly": w_monthly,
+        "years": w_years,
+        "rate": w_rate,
+        "future_value": round(fv),
+    },
+}
+st.session_state.profile = profile
 
 st.divider()
 
+# ---------------------------------------------------------------------------
+# Station 5 — AI Financial Coach
+# ---------------------------------------------------------------------------
+st.markdown("## 🤖 Station 5 — AI Financial Coach")
+st.caption("Grand Finale — the heart of Dhan Mitra. Ask it anything about *your* money.")
+
+p1, p2, p3, p4 = st.columns(4)
+p1.metric("Wellness Score", f"{wellness['score']}/100")
+p2.metric("Goal", goal_name.split(" ", 1)[-1])
+p3.metric("Risk Profile", risk_profile)
+p4.metric(f"{w_years}-yr Projection", f"₹{fv:,.0f}")
+
+
+def send_message(user_text: str):
+    if not hf_token:
+        st.warning("👈 Please add your Hugging Face API token in the sidebar to chat.")
+        return
+
+    st.session_state.chat_history.append({"role": "user", "content": user_text})
+
+    if looks_off_topic(user_text):
+        reply = DECLINE_MESSAGE
+    else:
+        with st.spinner("Dhan Mitra AI is thinking..."):
+            client = get_client(hf_token, provider or None)
+            system_prompt = build_system_prompt(st.session_state.profile)
+            reply = ask_coach(
+                client, model_id, system_prompt,
+                st.session_state.chat_history[:-1], user_text,
+            )
+
+    st.session_state.chat_history.append({"role": "assistant", "content": reply})
+
+
+st.markdown("**💬 Quick prompts:**")
+qcols = st.columns(3)
+for i, qp in enumerate(QUICK_PROMPTS):
+    if qcols[i % 3].button(qp, key=f"qp_{i}", use_container_width=True):
+        send_message(qp)
+        st.rerun()
+
+st.markdown("")
+
+if not st.session_state.chat_history:
+    st.info("👋 Ask me about your Wellness Score, your goal timeline, SIPs, or how "
+             "compounding grows your money — I'll answer using *your* numbers above.")
+
+for msg in st.session_state.chat_history:
+    avatar = "💰" if msg["role"] == "assistant" else "🧑"
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.markdown(msg["content"])
+
+user_input = st.chat_input("Ask Dhan Mitra AI about your money...")
+if user_input:
+    send_message(user_input)
+    st.rerun()
+
+# ---------------------------------------------------------------------------
+# Prompt Engineering demo
+# ---------------------------------------------------------------------------
+st.divider()
+with st.expander("🎓 See Prompt Engineering in action — vague vs. personalised"):
+    st.caption(
+        "A generic financial FAQ bot vs. Dhan Mitra AI, asked the exact same "
+        "question. Same underlying model — the difference is the prompt."
+    )
+    demo_prompt = st.text_input("Try a deliberately vague question", value=VAGUE_DEMO_PROMPT)
+
+    if st.button("Compare responses"):
+        if not hf_token:
+            st.warning("👈 Please add your Hugging Face API token in the sidebar first.")
+        else:
+            client = get_client(hf_token, provider or None)
+            generic_system = (
+                "You are a generic financial FAQ assistant. Answer briefly and "
+                "generically, with no personalisation, in under 80 words."
+            )
+            personal_system = build_system_prompt(st.session_state.profile)
+
+            dc1, dc2 = st.columns(2)
+            with dc1:
+                st.markdown("**❌ Vague prompt → generic bot**")
+                with st.spinner("Thinking..."):
+                    generic_reply = ask_coach(client, model_id, generic_system, [], demo_prompt)
+                st.info(generic_reply)
+            with dc2:
+                st.markdown("**✅ Same question → Dhan Mitra AI (personalised)**")
+                with st.spinner("Thinking..."):
+                    personal_reply = ask_coach(client, model_id, personal_system, [], demo_prompt)
+                st.success(personal_reply)
+
+st.divider()
 st.caption(
-    "💚 Dhan Mitra | Financial-literacy educational prototype | "
-    "Projections are illustrations, not guarantees."
+    "⚠️ Dhan Mitra is a student-built educational exhibit. All figures are "
+    "illustrative estimates, not real financial, tax, or investment advice."
 )
