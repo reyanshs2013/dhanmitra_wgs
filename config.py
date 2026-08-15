@@ -128,7 +128,7 @@ OFF_TOPIC_FAST_PATH = [
 # Models available via Hugging Face's serverless Inference Providers.
 # Students can pick whichever is live/fastest on the day of the exhibit.
 HF_MODEL_OPTIONS = {
-    "Qwen 2.5 — 7B Instruct (recommended)": "Qwen/Qwen2.5-7B-Instruct",
+    "Qwen 2.5 — 7B Instruct (recommended)": "Qwen/Qwen2.5-7B-Instruct", 
     "Qwen 2.5 — 1.5B Instruct (faster / lighter)": "Qwen/Qwen2.5-1.5B-Instruct",
     "Meta Llama 3.1 — 8B Instruct": "meta-llama/Llama-3.1-8B-Instruct",
 }
