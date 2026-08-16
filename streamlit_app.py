@@ -114,7 +114,7 @@ def ask_coach(question: str, profile: dict) -> str:
     if client is None:
         return "I cannot connect to the Hugging Face chat model"
 
-    system_prompt = f"""You are Dhanmitra, an encouraging AI financial-literacy coach for a Class-8 school project in India.
+    system_prompt = f"""You are Dhanmitra, an encouraging AI financial-literacy coach for a Class-8 school project.
 Only answer questions about personal finance, budgeting, saving, goals, investments, risk, interest, banking, insurance, taxes, or financial literacy. For any other topic, politely say: "I’m Dhanmitra, your finance coach. Please ask me a money or financial-literacy question."
 Use plain, student-friendly English. Be educational, not promotional. Do not claim to be a licensed adviser, give guaranteed returns, or tell the visitor to buy/sell a specific security. Use words such as "consider", "learn", and "discuss with a trusted adult/qualified professional". Keep the response under 180 words.
 Always clarify: SIP is a method of investing regularly; a mutual fund is an investment product.
@@ -124,22 +124,29 @@ Monthly income: {money(profile['income'])}; monthly needs: {money(profile['needs
 Goal: {profile['goal']} worth {money(profile['target'])}; already saved: {money(profile['saved'])}; monthly goal contribution: {money(profile['goal_monthly'])}; estimated time remaining: {profile['goal_months']} months.
 Risk profile: {profile['risk_name']} (score {profile['risk_score']}/10). Wealth Lab example: {money(profile['sip_monthly'])}/month for {profile['years']} years at an assumed {profile['return_rate']}% annual return could grow to approximately {money(profile['future_value'])}; this is an illustration, not a promise.
 """
-    model="meta-llama/llama-3.1-8b-instant"
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
-    errors = []
+    model = "meta-llama/llama-3.1-8b-instant"
     try:
-        # Current Hugging Face chat-completions interface.
+        # Groq is selected as the Hugging Face Inference Provider in get_client().
         response = client.chat.completions.create(
             model=model,
             messages=messages,
             max_tokens=300,
             temperature=0.35,
         )
+        if not response.choices:
+            return "The AI model did not return a response. Please try your question again."
+
         answer = response.choices[0].message.content
-        if answer:
-            return answer
+        if isinstance(answer, str) and answer.strip():
+            return answer.strip()
+        return "The AI model returned an empty response. Please try again in a moment."
     except Exception as exc:
-        errors.append(f"{model}: {type(exc).__name__}")
+        return (
+            f"I could not reach the Groq model through Hugging Face ({type(exc).__name__}). "
+            "Check that HF_TOKEN is a valid Hugging Face access token with Inference Providers access, "
+            "then try again."
+        )
 
 # ---- Session state ---------------------------------------------------------
 def init_state() -> None:
