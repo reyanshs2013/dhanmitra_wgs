@@ -106,13 +106,13 @@ def get_client() -> InferenceClient | None:
         token = None
     # "auto" routes the request to a Hugging Face inference provider that supports the model.
     # Without it, some deployments use a legacy endpoint that rejects chat-completion requests.
-    return InferenceClient(provider="auto", api_key=token) if token else None
+    return InferenceClient(provider="groq", api_key=token) if token else None
 
 
 def ask_coach(question: str, profile: dict) -> str:
     client = get_client()
     if client is None:
-        return "I cannot connect yet because the `HF_TOKEN` secret is missing. Add it in Streamlit Community Cloud, then try again."
+        return "I cannot connect to the Hugging Face chat model"
 
     system_prompt = f"""You are Dhanmitra, an encouraging AI financial-literacy coach for a Class-8 school project in India.
 Only answer questions about personal finance, budgeting, saving, goals, investments, risk, interest, banking, insurance, taxes, or financial literacy. For any other topic, politely say: "I’m Dhanmitra, your finance coach. Please ask me a money or financial-literacy question."
@@ -124,33 +124,22 @@ Monthly income: {money(profile['income'])}; monthly needs: {money(profile['needs
 Goal: {profile['goal']} worth {money(profile['target'])}; already saved: {money(profile['saved'])}; monthly goal contribution: {money(profile['goal_monthly'])}; estimated time remaining: {profile['goal_months']} months.
 Risk profile: {profile['risk_name']} (score {profile['risk_score']}/10). Wealth Lab example: {money(profile['sip_monthly'])}/month for {profile['years']} years at an assumed {profile['return_rate']}% annual return could grow to approximately {money(profile['future_value'])}; this is an illustration, not a promise.
 """
-    # Small instruction models are fast and economical for a school demonstration.
-    # The first available model is used; provider="auto" selects a compatible provider.
-    models = [
-        "Qwen/Qwen2.5-7B-Instruct",
-        "HuggingFaceTB/SmolLM2-1.7B-Instruct",
-        "meta-llama/Llama-3.2-3B-Instruct",
-    ]
+
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
     errors = []
-    for model in models:
-        try:
-            # Current Hugging Face chat-completions interface.
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=300,
-                temperature=0.35,
-            )
-            answer = response.choices[0].message.content
-            if answer:
-                return answer
-        except Exception as exc:
-            errors.append(f"{model}: {type(exc).__name__}")
-
-    return (
-        "I could not connect to an available Hugging Face chat model. Please wait for few minutes"
-    )
+    try:
+        # Current Hugging Face chat-completions interface.
+        response = client.chat.completions.create(
+            model="meta-llama/llama-3.1-8b-instant",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.35,
+        )
+        answer = response.choices[0].message.content
+        if answer:
+            return answer
+    except Exception as exc:
+        errors.append(f"{model}: {type(exc).__name__}")
 
 # ---- Session state ---------------------------------------------------------
 def init_state() -> None:
