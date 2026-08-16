@@ -1,3 +1,14 @@
+"""Dhanmitra — AI Financial Coach (Station 5)
+
+Deploy on Streamlit Community Cloud. Add this to secrets:
+HF_TOKEN = "your_hugging_face_token"
+
+Recommended requirements.txt:
+streamlit
+pandas
+huggingface_hub>=0.28.0
+"""
+
 import math
 import re
 from datetime import datetime
@@ -81,7 +92,8 @@ def finance_only(question: str) -> bool:
         "money", "budget", "save", "saving", "income", "expense", "spend", "spending", "loan", "debt",
         "interest", "invest", "investment", "mutual", "fund", "sip", "stock", "share", "gold", "fd",
         "fixed deposit", "bank", "tax", "insurance", "credit", "wallet", "goal", "wealth", "finance",
-        "financial", "rupee", "₹", "emergency", "compound", "return", "risk", "salary", "cash",
+        "financial", "wellness", "wellness score", "score", "rupee", "₹", "emergency",
+        "compound", "return", "risk", "salary", "cash", "improve my score", "money map",
     }
     normalized = question.lower()
     return any(term in normalized for term in finance_terms)
@@ -92,7 +104,9 @@ def get_client() -> InferenceClient | None:
         token = st.secrets.get("HF_TOKEN")
     except Exception:
         token = None
-    return InferenceClient(api_key=token) if token else None
+    # "auto" routes the request to a Hugging Face inference provider that supports the model.
+    # Without it, some deployments use a legacy endpoint that rejects chat-completion requests.
+    return InferenceClient(provider="auto", api_key=token) if token else None
 
 
 def ask_coach(question: str, profile: dict) -> str:
@@ -110,21 +124,33 @@ Monthly income: {money(profile['income'])}; monthly needs: {money(profile['needs
 Goal: {profile['goal']} worth {money(profile['target'])}; already saved: {money(profile['saved'])}; monthly goal contribution: {money(profile['goal_monthly'])}; estimated time remaining: {profile['goal_months']} months.
 Risk profile: {profile['risk_name']} (score {profile['risk_score']}/10). Wealth Lab example: {money(profile['sip_monthly'])}/month for {profile['years']} years at an assumed {profile['return_rate']}% annual return could grow to approximately {money(profile['future_value'])}; this is an illustration, not a promise.
 """
-    # Provider routing lets Hugging Face select an available inference provider.
-    models = ["Qwen/Qwen2.5-7B-Instruct", "HuggingFaceH4/zephyr-7b-beta"]
-    last_error = None
+    # Small instruction models are fast and economical for a school demonstration.
+    # The first available model is used; provider="auto" selects a compatible provider.
+    models = [
+        "Qwen/Qwen2.5-7B-Instruct",
+        "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        "meta-llama/Llama-3.2-3B-Instruct",
+    ]
+    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
+    errors = []
     for model in models:
         try:
-            response = client.chat_completion(
+            # Current Hugging Face chat-completions interface.
+            response = client.chat.completions.create(
                 model=model,
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": question}],
+                messages=messages,
                 max_tokens=300,
                 temperature=0.35,
             )
-            return response.choices[0].message.content
+            answer = response.choices[0].message.content
+            if answer:
+                return answer
         except Exception as exc:
-            last_error = exc
-    return f"I could not reach the Hugging Face model right now. Please try again in a moment. ({type(last_error).__name__})"
+            errors.append(f"{model}: {type(exc).__name__}")
+
+    return (
+        "I could not connect to an available Hugging Face chat model. Please wait for few minutes"
+    )
 
 # ---- Session state ---------------------------------------------------------
 def init_state() -> None:
