@@ -124,13 +124,13 @@ Monthly income: {money(profile['income'])}; monthly needs: {money(profile['needs
 Goal: {profile['goal']} worth {money(profile['target'])}; already saved: {money(profile['saved'])}; monthly goal contribution: {money(profile['goal_monthly'])}; estimated time remaining: {profile['goal_months']} months.
 Risk profile: {profile['risk_name']} (score {profile['risk_score']}/10). Wealth Lab example: {money(profile['sip_monthly'])}/month for {profile['years']} years at an assumed {profile['return_rate']}% annual return could grow to approximately {money(profile['future_value'])}; this is an illustration, not a promise.
 """
-
+    model="meta-llama/llama-3.1-8b-instant"
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
     errors = []
     try:
         # Current Hugging Face chat-completions interface.
         response = client.chat.completions.create(
-            model="meta-llama/llama-3.1-8b-instant",
+            model=model,
             messages=messages,
             max_tokens=300,
             temperature=0.35,
