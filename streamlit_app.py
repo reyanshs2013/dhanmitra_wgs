@@ -1,12 +1,5 @@
 """Dhanmitra — AI Financial Coach (Station 5)
 
-Deploy on Streamlit Community Cloud. Add this to secrets:
-HF_TOKEN = "your_hugging_face_token"
-
-Recommended requirements.txt:
-streamlit
-pandas
-huggingface_hub>=0.28.0
 """
 
 import math
@@ -15,7 +8,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from huggingface_hub import InferenceClient
+from groq import Groq
 
 st.set_page_config(
     page_title="Dhanmitra | AI Financial Coach",
@@ -99,20 +92,22 @@ def finance_only(question: str) -> bool:
     return any(term in normalized for term in finance_terms)
 
 
-def get_client() -> InferenceClient | None:
+def get_client() -> Groq | None:
+    """Create a direct Groq client from Streamlit secrets."""
     try:
-        token = st.secrets.get("HF_TOKEN")
+        api_key = st.secrets.get("GROQ_API_KEY")
     except Exception:
-        token = None
-    # "auto" routes the request to a Hugging Face inference provider that supports the model.
-    # Without it, some deployments use a legacy endpoint that rejects chat-completion requests.
-    return InferenceClient(provider="groq", api_key=token) if token else None
+        api_key = None
+    return Groq(api_key=api_key) if api_key else None
 
 
 def ask_coach(question: str, profile: dict) -> str:
     client = get_client()
     if client is None:
-        return "I cannot connect to the Hugging Face chat model"
+        return (
+            "I cannot connect yet because the `GROQ_API_KEY` secret is missing. "
+            "Add your Groq key in Streamlit Community Cloud, then try again."
+        )
 
     system_prompt = f"""You are Dhanmitra, an encouraging AI financial-literacy coach for a Class-8 school project.
 Only answer questions about personal finance, budgeting, saving, goals, investments, risk, interest, banking, insurance, taxes, or financial literacy. For any other topic, politely say: "I’m Dhanmitra, your finance coach. Please ask me a money or financial-literacy question."
@@ -124,28 +119,28 @@ Monthly income: {money(profile['income'])}; monthly needs: {money(profile['needs
 Goal: {profile['goal']} worth {money(profile['target'])}; already saved: {money(profile['saved'])}; monthly goal contribution: {money(profile['goal_monthly'])}; estimated time remaining: {profile['goal_months']} months.
 Risk profile: {profile['risk_name']} (score {profile['risk_score']}/10). Wealth Lab example: {money(profile['sip_monthly'])}/month for {profile['years']} years at an assumed {profile['return_rate']}% annual return could grow to approximately {money(profile['future_value'])}; this is an illustration, not a promise.
 """
-    messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
-    model = "meta-llama/Llama-3.1-8B-Instruct"
+
     try:
-        # Groq is selected as the Hugging Face Inference Provider in get_client().
         response = client.chat.completions.create(
-            model=model,
-            messages=messages,
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question},
+            ],
             max_tokens=300,
             temperature=0.35,
         )
         if not response.choices:
-            return "The AI model did not return a response. Please try your question again."
+            return "The Groq model did not return a response. Please try again."
 
         answer = response.choices[0].message.content
         if isinstance(answer, str) and answer.strip():
             return answer.strip()
-        return "The AI model returned an empty response. Please try again in a moment."
+        return "The Groq model returned an empty response. Please try again in a moment."
     except Exception as exc:
         return (
-            f"I could not reach the Groq model through Hugging Face ({type(exc).__name__}). "
-            "Check that HF_TOKEN is a valid Hugging Face access token with Inference Providers access, "
-            "then try again."
+            f"I could not reach the Groq model ({type(exc).__name__}). "
+            "Check that GROQ_API_KEY is valid and that the Groq service is available, then try again."
         )
 
 # ---- Session state ---------------------------------------------------------
