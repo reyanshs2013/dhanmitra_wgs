@@ -125,7 +125,7 @@ Goal: {profile['goal']} worth {money(profile['target'])}; already saved: {money(
 Risk profile: {profile['risk_name']} (score {profile['risk_score']}/10). Wealth Lab example: {money(profile['sip_monthly'])}/month for {profile['years']} years at an assumed {profile['return_rate']}% annual return could grow to approximately {money(profile['future_value'])}; this is an illustration, not a promise.
 """
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
-    model = "meta-llama/llama-3.1-8b-instant"
+    model = "meta-llama/Llama-3.1-8B-Instant"
     try:
         # Groq is selected as the Hugging Face Inference Provider in get_client().
         response = client.chat.completions.create(
