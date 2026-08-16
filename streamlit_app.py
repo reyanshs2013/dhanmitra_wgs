@@ -1,14 +1,3 @@
-"""Dhanmitra — AI Financial Coach (Station 5)
-
-Deploy on Streamlit Community Cloud. Add this to secrets:
-HF_TOKEN = "your_hugging_face_token"
-
-Recommended requirements.txt:
-streamlit
-pandas
-huggingface_hub
-"""
-
 import math
 import re
 from datetime import datetime
@@ -29,7 +18,19 @@ st.markdown("""
 <style>
     .stApp {background: linear-gradient(135deg,#f6fbff 0%,#eefaf4 60%,#fff9eb 100%);}
     [data-testid="stSidebar"] {background: #082f49;}
-    [data-testid="stSidebar"] * {color: #f8fafc;}
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label, [data-testid="stSidebar"] .stCaption {color: #f8fafc !important;}
+    /* Keep expander headers and their open panels dark, so labels stay visible. */
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        background: #0b3b57 !important; border: 1px solid #25627c; border-radius: 10px; overflow: hidden;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] details,
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary,
+    [data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+        background: #0b3b57 !important; color: #f8fafc !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary * {color: #f8fafc !important;}
+    [data-testid="stSidebar"] [data-testid="stExpander"] div[data-baseweb="slider"] * {color: #f8fafc !important;}
     .hero {padding: 1.4rem 1.7rem; border-radius: 22px; background: linear-gradient(120deg,#0f766e,#0284c7); color:white; box-shadow:0 10px 30px rgba(2,132,199,.22); margin-bottom:1rem;}
     .hero h1 {margin:0; font-size:2.1rem;}
     .hero p {margin:.35rem 0 0; font-size:1.05rem; opacity:.95;}
@@ -99,7 +100,7 @@ def ask_coach(question: str, profile: dict) -> str:
     if client is None:
         return "I cannot connect yet because the `HF_TOKEN` secret is missing. Add it in Streamlit Community Cloud, then try again."
 
-    system_prompt = f"""You are Dhanmitra, an encouraging AI financial-literacy coach for a Class-8 school project.
+    system_prompt = f"""You are Dhanmitra, an encouraging AI financial-literacy coach for a Class-8 school project in India.
 Only answer questions about personal finance, budgeting, saving, goals, investments, risk, interest, banking, insurance, taxes, or financial literacy. For any other topic, politely say: "I’m Dhanmitra, your finance coach. Please ask me a money or financial-literacy question."
 Use plain, student-friendly English. Be educational, not promotional. Do not claim to be a licensed adviser, give guaranteed returns, or tell the visitor to buy/sell a specific security. Use words such as "consider", "learn", and "discuss with a trusted adult/qualified professional". Keep the response under 180 words.
 Always clarify: SIP is a method of investing regularly; a mutual fund is an investment product.
@@ -205,8 +206,39 @@ with right:
     st.caption(f"Risk coach note: {risk_tip}")
     st.caption(f"Illustration rate selected: {return_rate:.1f}% a year. Real returns can be higher or lower.")
 
+st.subheader("🧠 Prompt Engineering Lab")
+st.caption("See why a specific question gives Dhanmitra enough context to give a useful answer.")
+
+vague_question = "How can I save money?"
+vague_answer = "Track your spending, reduce unnecessary purchases, and try to save regularly."
+specific_question = (
+    f"My monthly income is {money(income)}. I spend {money(needs)} on needs and "
+    f"{money(wants)} on wants. I have saved {money(saved)} towards my {goal.lower()} "
+    f"goal of {money(target)}. How can I reach it sooner?"
+)
+extra_needed = max(target - saved, 0)
+personalised_answer = (
+    f"You have saved {money(saved)} of your {money(target)} {goal.lower()} goal. "
+    f"At {money(goal_monthly)} each month, the remaining {money(extra_needed)} may take about "
+    f"{goal_months} months. Start by reviewing the {money(wants)} you spend on wants: moving even "
+    f"₹500 per month from wants to this goal could shorten the wait. Keep your savings contribution "
+    f"automatic and review the plan each month."
+)
+
+vague_col, specific_col = st.columns(2)
+with vague_col:
+    st.markdown("#### 😶 Vague prompt")
+    st.info(vague_question)
+    st.caption("**Typical answer:** " + vague_answer)
+with specific_col:
+    st.markdown("#### ✨ Personalised prompt")
+    st.success(specific_question)
+    st.caption("**More actionable answer:** " + personalised_answer)
+    if st.button("💬 Ask this personalised prompt", use_container_width=True):
+        st.session_state.pending_question = specific_question
+
 st.subheader("💬 Ask your AI coach")
-st.caption("Try a quick prompt, then make it more specific. This demonstrates prompt engineering!")
+st.caption("Try a quick prompt, or use the personalised prompt above. This demonstrates prompt engineering!")
 quick_prompts = [
     "How can I improve my wellness score?",
     "Explain compound growth using my Wealth Lab numbers.",
