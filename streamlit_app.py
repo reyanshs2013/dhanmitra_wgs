@@ -257,7 +257,7 @@ with specific_col:
 st.subheader("💬 Ask your AI coach")
 st.caption("Try a quick prompt, or use the personalised prompt above. This demonstrates prompt engineering!")
 quick_prompts = [
-    "How can I improve my wellness score?",
+    "How can I improve my financial wellness score?",
     "Explain compound growth using my Wealth Lab numbers.",
     "Can I reach my goal one month earlier?",
     "What does my risk profile mean?",
